@@ -4,15 +4,26 @@ import test from "node:test";
 
 const source = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
 const session = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
-const thinkingControl = source.slice(source.indexOf("{onThinkingLevelChange && ("));
+const thinkingControl = source.slice(
+  source.indexOf("{onThinkingLevelChange && ("),
+  source.indexOf("{!isStreaming && onToolPresetChange"),
+);
 
-test("keeps one thinking control and disables it while the session is busy", () => {
+test("keeps one thinking control and leaves it usable while the session is busy", () => {
   assert.doesNotMatch(source, /isStreaming && onThinkingLevelChange/);
-  assert.doesNotMatch(thinkingControl, /<span\s+title=\{t\("chat\.currentReasoning"/);
-  assert.match(thinkingControl, /disabled=\{isStreaming\}/);
-  assert.match(thinkingControl, /title=\{isStreaming/);
-  assert.match(thinkingControl, /t\("chat\.currentReasoning", \{ level: thinkingDisplayLabel \}\)/);
+  assert.doesNotMatch(thinkingControl, /disabled=\{isStreaming\}/);
+  assert.doesNotMatch(thinkingControl, /onClick=\{\(\) => !isStreaming && setThinkingDropdownOpen/);
+  assert.match(thinkingControl, /aria-keyshortcuts="Shift\+Tab"/);
   assert.match(thinkingControl, /t\("chat\.changeReasoning", \{ level: thinkingDisplayLabel \}\)/);
+  assert.match(source, /e\.key !== "Tab" || !e\.shiftKey || e\.altKey || e\.ctrlKey || e\.metaKey/);
+  assert.match(source, /window\.addEventListener\("keydown", onKey, true\)/);
+  assert.match(source, /field !== textareaRef\.current/);
+  assert.match(source, /selectableThinkingLevels\(availableThinkingLevels\)/);
+  assert.match(source, /onThinkingLevelChange\(next\)/);
+  assert.match(source, /high: "#d946ef"/);
+  assert.match(source, /level === "xhigh"/);
+  assert.match(source, /linear-gradient\(120deg, #f43f5e, #f59e0b, #22c55e, #06b6d4, #8b5cf6\)/);
+  assert.match(source, /thinkingFrameStyle\(isAutoThinkingSelection \? null : resolvedThinkingLevel\)/);
 });
 
 test("shows the resolved level and treats auto as an uncommitted default", () => {

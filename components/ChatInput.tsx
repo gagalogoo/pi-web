@@ -199,6 +199,34 @@ function subscribeUpwardMenuMaxHeight(
 }
 
 const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function selectableThinkingLevels(available: string[] | null | undefined) {
+  return THINKING_LEVELS.filter((lvl) => !available || lvl === "auto" || available.includes(lvl));
+}
+
+const THINKING_FRAME_COLOR: Partial<Record<typeof THINKING_LEVELS[number], string>> = {
+  minimal: "#64748b",
+  low: "#2563eb",
+  medium: "#0d9488",
+  high: "#d946ef",
+  max: "#ea580c",
+};
+
+function thinkingFrameStyle(level: typeof THINKING_LEVELS[number] | null): React.CSSProperties {
+  if (level === "xhigh") {
+    return {
+      border: "1px solid transparent",
+      background: "linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(120deg, #f43f5e, #f59e0b, #22c55e, #06b6d4, #8b5cf6) border-box",
+    };
+  }
+  const color = level ? THINKING_FRAME_COLOR[level] : undefined;
+  if (!color) return {};
+  return {
+    border: `1px solid ${color}`,
+    background: `color-mix(in srgb, ${color} 10%, var(--bg))`,
+  };
+}
+
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
   auto: "chat.thinkingUseDefault", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
   medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax",
@@ -1539,6 +1567,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   })();
   const rawToolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "configured"))?.[0] ?? "configured";
   const toolPresetLabel = rawToolPresetLabel === "chat-only" ? t("chat.chatOnly") : rawToolPresetLabel;
+  const thinkingFrame = compact || bashMode ? null : thinkingFrameStyle(isAutoThinkingSelection ? null : resolvedThinkingLevel);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -1562,9 +1591,34 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   useEffect(() => {
     if (!isStreaming) return;
-    setThinkingDropdownOpen(false);
     setToolDropdownOpen(false);
   }, [isStreaming]);
+
+  useEffect(() => {
+    if (!onThinkingLevelChange) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+      const target = e.target;
+      if (target instanceof Element) {
+        const field = target.closest("input, textarea, [contenteditable='true']");
+        if (field && field !== textareaRef.current) return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const levels = selectableThinkingLevels(availableThinkingLevels);
+      if (levels.length === 0) return;
+      const current = isAutoThinkingSelection || !thinkingLevel || thinkingLevel === "auto" ? "auto" : thinkingLevel;
+      const index = levels.indexOf(current);
+      const next = levels[(index + 1) % levels.length];
+      if (next === "auto") {
+        if (!isAutoThinkingSelection) onThinkingLevelChange("auto");
+      } else if (isAutoThinkingSelection || next !== thinkingLevel) {
+        onThinkingLevelChange(next);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onThinkingLevelChange, availableThinkingLevels, isAutoThinkingSelection, thinkingLevel]);
 
   useEffect(() => {
     if (!isMobile) setControlsMenuOpen(false);
@@ -2115,8 +2169,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               flexDirection: compact ? "column" : "row",
               gap: 8,
               alignItems: compact ? "stretch" : "center",
-              background: "var(--bg)",
-              border: compact ? "none" : `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
+              background: thinkingFrame?.background ?? "var(--bg)",
+              border: compact ? "none" : thinkingFrame?.border ?? `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
                 ? "rgba(234,179,8,0.4)"
                 : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: compact ? 0 : 14,
@@ -2397,12 +2451,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button
-                  onClick={() => !isStreaming && setThinkingDropdownOpen((v) => !v)}
-                  disabled={isStreaming}
-                  title={isStreaming
-                    ? t("chat.currentReasoning", { level: thinkingDisplayLabel })
-                    : t("chat.changeReasoning", { level: thinkingDisplayLabel })}
+                  onClick={() => setThinkingDropdownOpen((v) => !v)}
+                  title={`${t("chat.changeReasoning", { level: thinkingDisplayLabel })} (Shift+Tab)`}
                   aria-label={t("chat.changeReasoningLabel")}
+                  aria-keyshortcuts="Shift+Tab"
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -2412,13 +2464,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     border: "none",
                     borderRadius: 9,
                     color: "var(--text-muted)",
-                    cursor: isStreaming ? "not-allowed" : "pointer",
+                    cursor: "pointer",
                     fontSize: 12,
-                    opacity: isStreaming ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
-                    if (isStreaming) return;
                     e.currentTarget.style.background = "var(--bg-hover)";
                     e.currentTarget.style.color = "var(--text)";
                   }}
@@ -2442,11 +2492,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
                     overflow: "hidden", minWidth: 180,
                   }}>
-                    {THINKING_LEVELS.filter((lvl) => {
-                      if (!availableThinkingLevels) return true;
-                      if (lvl === "auto") return true;
-                      return availableThinkingLevels.includes(lvl);
-                    }).map((lvl) => {
+                    {selectableThinkingLevels(availableThinkingLevels).map((lvl) => {
                       const isActive = lvl === "auto"
                         ? isAutoThinkingSelection
                         : !isAutoThinkingSelection && resolvedThinkingLevel === lvl;

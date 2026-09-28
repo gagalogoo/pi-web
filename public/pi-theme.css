@@ -1,0 +1,156 @@
+/* Local photo layer. npm update replaces this file. */
+:root {
+  --pi-image: url("/user-bg.png");
+  --pi-opacity: 1;
+  --pi-mask: 0.2;
+  --pi-contrast: 1;
+  --pi-solid: #1a1a1a;
+  --pi-solid-panel: #242424;
+  --pi-solid-hover: #2e2e2e;
+  --pi-solid-selected: #383838;
+  --pi-solid-user: #292929;
+  --pi-solid-tool: #222;
+}
+html[data-theme=light] {
+  --pi-solid: #fff;
+  --pi-solid-panel: #f5f5f5;
+  --pi-solid-hover: #eee;
+  --pi-solid-selected: #e8e8e8;
+  --pi-solid-user: #eff6ff;
+  --pi-solid-tool: #f9fafb;
+}
+html[data-theme=mist] {
+  --pi-solid: #f4f8f7;
+  --pi-solid-panel: #e9f0ee;
+  --pi-solid-hover: #e0eae7;
+  --pi-solid-selected: #d7e4df;
+  --pi-solid-user: #e0efeb;
+  --pi-solid-tool: #ecf3f0;
+}
+html[data-theme=rose] {
+  --pi-solid: #fcf7f8;
+  --pi-solid-panel: #f3edef;
+  --pi-solid-hover: #eee3e7;
+  --pi-solid-selected: #e8dce1;
+  --pi-solid-user: #f3e4eb;
+  --pi-solid-tool: #f7eef2;
+}
+html[data-theme=pine] {
+  --pi-solid: #19201f;
+  --pi-solid-panel: #212b28;
+  --pi-solid-hover: #2b3632;
+  --pi-solid-selected: #35433c;
+  --pi-solid-user: #25382f;
+  --pi-solid-tool: #222d29;
+}
+html {
+  background-color: #111 !important;
+  background-image: none !important;
+}
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+body::before {
+  background: var(--pi-image) center / cover no-repeat;
+  opacity: var(--pi-opacity);
+  filter: contrast(var(--pi-contrast));
+}
+body::after {
+  background: #000;
+  opacity: var(--pi-mask);
+}
+body {
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+:root,
+html {
+  --bg: color-mix(in srgb, canvas 40%, transparent) !important;
+  --assistant-bg: color-mix(in srgb, canvas 36%, transparent) !important;
+  --bg-panel: color-mix(in srgb, canvas 64%, transparent) !important;
+  --user-bg: color-mix(in srgb, canvas 52%, transparent) !important;
+  --tool-bg: color-mix(in srgb, canvas 72%, transparent) !important;
+  --bg-hover: color-mix(in srgb, canvas 50%, transparent) !important;
+  --bg-selected: color-mix(in srgb, canvas 58%, transparent) !important;
+}
+.config-panel-surface,
+.config-panel-surface .config-split-view,
+.config-panel-surface .config-detail,
+.config-panel-surface .config-detail-stack,
+.config-panel-surface .config-panel-header {
+  background: var(--pi-solid) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  --bg: var(--pi-solid) !important;
+  --assistant-bg: var(--pi-solid) !important;
+  --bg-panel: var(--pi-solid-panel) !important;
+  --user-bg: var(--pi-solid-user) !important;
+  --tool-bg: var(--pi-solid-tool) !important;
+  --bg-hover: var(--pi-solid-hover) !important;
+  --bg-selected: var(--pi-solid-selected) !important;
+}
+.config-panel-surface .config-sidebar {
+  background: var(--pi-solid-panel) !important;
+}
+.settings-dialog-surface,
+.settings-dialog-header,
+.settings-dialog-main,
+.settings-section-host,
+.settings-general {
+  background: var(--pi-solid) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  --bg: var(--pi-solid) !important;
+  --assistant-bg: var(--pi-solid) !important;
+  --bg-panel: var(--pi-solid-panel) !important;
+  --user-bg: var(--pi-solid-user) !important;
+  --tool-bg: var(--pi-solid-tool) !important;
+  --bg-hover: var(--pi-solid-hover) !important;
+  --bg-selected: var(--pi-solid-selected) !important;
+}
+.settings-dialog-main {
+  position: relative !important;
+}
+.markdown-code-block,
+.markdown-code-header {
+  background: color-mix(in srgb, canvas 92%, transparent) !important;
+}
+#pi-theme-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 20px 22px;
+  background: var(--pi-solid);
+  color: var(--text);
+  font-size: 12px;
+}
+#pi-theme-panel h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+#pi-theme-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+#pi-theme-panel .pi-row {
+  display: flex;
+  justify-content: space-between;
+}
+#pi-theme-panel input[type="range"] {
+  width: 100%;
+}
+#pi-theme-panel .pi-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

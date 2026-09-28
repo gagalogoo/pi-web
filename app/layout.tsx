@@ -68,6 +68,8 @@ export default function RootLayout({
             __html: THEME_INIT_SCRIPT,
           }}
         />
+        <link rel="stylesheet" href="/pi-theme.css" />
+        <script src="/pi-theme.js" defer />
       </head>
       <body translate="no" className="notranslate" suppressHydrationWarning>
         {children}

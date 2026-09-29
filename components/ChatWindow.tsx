@@ -1228,6 +1228,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     part={options.part}
                     toolGroup={options.toolGroup}
                     thinkingLevel={thinkingLevel ?? undefined}
+                    isLatest={msg.role === "assistant" && idx >= lastAnchorIdx}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;
@@ -1503,7 +1504,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       ref={(el) => { if (processRefIdx !== undefined) messageRefs.current[processRefIdx] = el; }}
                     >
                       {hasTree ? processViews : (
-                        <ProcessDetailsGroup messageCount={processMessageCount} toolCallCount={processToolCount} defaultExpanded={!finalAnswerMessage} reveal={revealProcess} t={t}>
+                        <ProcessDetailsGroup messageCount={processMessageCount} toolCallCount={processToolCount} defaultExpanded={!finalAnswerMessage || userIdx === lastAnchorIdx} reveal={revealProcess} t={t}>
                           {processViews}
                         </ProcessDetailsGroup>
                       )}
@@ -1548,7 +1549,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               );
             })()}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} isLatest />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (

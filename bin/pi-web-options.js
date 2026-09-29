@@ -8,7 +8,7 @@ const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const CLI_OPTIONS = {
   port: { type: "string", short: "p" },
   hostname: { type: "string", short: "H" },
-  "no-open": { type: "boolean" },
+  open: { type: "boolean" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -37,13 +37,13 @@ Start the Pi Web UI server.
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)
   -H, --hostname <host>      Bind hostname (default: 127.0.0.1, or PI_WEB_HOSTNAME)
-      --no-open              Do not open a browser automatically
+      --open                 Open a browser when the server is ready
   -h, --help                 Show this help message and exit
 
 Environment:
   PORT                       Default port when --port is omitted
   PI_WEB_HOSTNAME            Default hostname when --hostname is omitted
-  PI_WEB_NO_OPEN             Set to 1/true/yes/on to disable browser open
+  PI_WEB_OPEN                Set to 1/true/yes/on to open a browser on start
   PI_WEB_PASSWORD            Enable browser password login and API Basic Auth
   PI_WEB_ALLOWED_HOSTS       Extra exact proxy/custom hostnames, comma-separated
   PI_WEB_SKIP_VERSION_CHECK  Set to 1 to disable Pi Web update checks
@@ -82,7 +82,7 @@ function parseLaunchOptions(args = process.argv.slice(2), env = process.env) {
     help: false,
     port: normalizePort(values.port ?? env.PORT ?? "30141"),
     hostname: values.hostname ?? env.PI_WEB_HOSTNAME ?? "127.0.0.1",
-    openBrowser: !values["no-open"] && !isEnabled(env.PI_WEB_NO_OPEN),
+    openBrowser: values.open === true || isEnabled(env.PI_WEB_OPEN),
   };
 }
 

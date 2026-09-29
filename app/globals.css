@@ -701,6 +701,14 @@ button.extension-widget-trigger:focus-visible {
   scrollbar-width: thin;
 }
 
+.extension-status-line.clickable {
+  cursor: pointer;
+}
+
+.extension-status-line.clickable:hover {
+  background: var(--bg-hover);
+}
+
 .extension-status-text {
   flex: 1;
   min-width: 0;

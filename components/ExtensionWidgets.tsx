@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { AnsiText } from "@/components/AnsiText";
 import type { ExtensionWidgetItem } from "@/lib/types";
 
-export const DEFAULT_EXPANDED_WIDGET_LINES = 3;
+export const DEFAULT_EXPANDED_WIDGET_LINES = 6;
 export const WIDGET_UPDATE_IDLE_MS = 1100;
 
 export function formatExtensionWidgetContent(lines: string[]): string {

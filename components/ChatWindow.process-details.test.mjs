@@ -11,3 +11,8 @@ test("expands process details for the latest turn and turns without a final answ
     /<ProcessDetailsGroup[\s\S]*?defaultExpanded=\{!finalAnswerMessage \|\| userIdx === lastAnchorIdx\}/,
   );
 });
+
+test("expands the latest turn's last thought round inside a multi-round tree", () => {
+  assert.match(source, /defaultExpanded=\{latestTurn && roundIndex === rounds\.length - 1\}/);
+  assert.match(source, /renderTree\(plan\.steps, resolveProcess, "process", false, userIdx === lastAnchorIdx\)/);
+});

@@ -78,6 +78,15 @@ test("renders a single status line without identifier keys", () => {
   assert.doesNotMatch(html, /05-ponytail|20-memory/);
 });
 
+test("makes the status line clickable when a click handler is attached", () => {
+  const html = renderStatusBar({
+    statuses: [{ key: "bg", text: "bg 1 done · Shift↓ · /bg-clear" }],
+    onStatusClick: () => {},
+  });
+
+  assert.match(html, /extension-status-line clickable/);
+});
+
 test("renders widgets and status text in one footer", () => {
   const html = renderStatusBar({
     statuses: [{ key: "status", text: "connected" }],

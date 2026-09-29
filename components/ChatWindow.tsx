@@ -460,6 +460,15 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
   const sessionBusy = agentRunning || bashRunning;
+
+  // TUI 里 Shift+↓ 展开 bg dock；网页版点击状态栏等效：向会话发 /bg-tasks 列出后台任务
+  const handleStatusBarClick = useCallback(() => {
+    if (sessionBusy) return;
+    const line = extensionStatuses.map((s) => s.text).join(" ");
+    if (/\bbg\s+\d+/.test(line) || line.includes("/bg-clear")) {
+      void handleSend("/bg-tasks");
+    }
+  }, [sessionBusy, extensionStatuses, handleSend]);
   const [quotedSelection, setQuotedSelection] = useState<{
     text: string;
     top: number;
@@ -1137,6 +1146,40 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           pointerEvents: "none",
         }}
       >
+        {isCompacting && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minHeight: 60,
+              marginBottom: 6,
+              borderRadius: 14,
+              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+              background: "var(--bg)",
+              color: "var(--text-muted)",
+              width: "fit-content",
+              maxWidth: "min(100%, 620px)",
+              boxShadow: "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)",
+              fontSize: 14,
+              lineHeight: 1.5,
+              animation: "notice-shelf-in 0.18s ease-out backwards",
+              padding: "0 12px",
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: "var(--accent)",
+                flexShrink: 0,
+                animation: "pulse 1.2s ease-in-out infinite",
+              }}
+            />
+            <span style={{ padding: "14px 0" }}>{t("chat.compacting")}</span>
+          </div>
+        )}
         <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
       </div>
 
@@ -1244,6 +1287,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 resolve: (index: number) => AgentMessage,
                 keyPrefix: string,
                 attachRef: boolean,
+                latestTurn = false,
               ): ReactNode => {
                 const attached = new Set<number>();
                 const hit = (index: number, blocks: AssistantContentBlock[]) => Boolean(
@@ -1346,6 +1390,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       streaming={streamState.isStreaming}
                       containsEdit={emit.containsEdit}
                       reveal={emit.reveal}
+                      defaultExpanded={latestTurn && roundIndex === rounds.length - 1}
                       label={label}
                       hint={hint || undefined}
                       nodes={nodes}
@@ -1375,7 +1420,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               const appendFull = (into: ReactNode[], start: number, end: number) => {
                 for (const plan of planToolTrees(messages, start, end)) {
                   if (plan.type === "tree") {
-                    const node = renderTree(plan.steps, (index) => messages[index], "message", true);
+                    const node = renderTree(plan.steps, (index) => messages[index], "message", true, start === lastAnchorIdx);
                     if (node) into.push(node);
                     continue;
                   }
@@ -1472,7 +1517,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                         for (const index of step.indices) noteProcess(index, groupBlocks(resolveProcess(index) as AssistantMessage, step.key));
                       }
                     }
-                    const node = renderTree(plan.steps, resolveProcess, "process", false);
+                    const node = renderTree(plan.steps, resolveProcess, "process", false, userIdx === lastAnchorIdx);
                     if (node) processViews.push(node);
                     continue;
                   }
@@ -1720,7 +1765,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           </div>
         )}
         {chatInputElement}
-        <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
+        <ExtensionStatusBar
+          statuses={extensionStatuses}
+          widgets={extensionWidgets}
+          onStatusClick={handleStatusBarClick}
+        />
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>

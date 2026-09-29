@@ -24,9 +24,11 @@ export function formatExtensionStatusLine(statuses: ExtensionStatusItem[]): stri
 export function ExtensionStatusBar({
   statuses,
   widgets = [],
+  onStatusClick,
 }: {
   statuses: ExtensionStatusItem[];
   widgets?: ExtensionWidgetItem[];
+  onStatusClick?: () => void;
 }) {
   if (statuses.length === 0 && widgets.length === 0) return null;
 
@@ -41,9 +43,10 @@ export function ExtensionStatusBar({
       {statuses.length > 0 && (
         <div
           role="status"
-          className="extension-status-line"
+          className={`extension-status-line${onStatusClick ? " clickable" : ""}`}
           aria-label={plainStatusLine}
           title={plainStatusLine}
+          onClick={onStatusClick}
         >
           <span className="extension-status-text">
             <AnsiText text={statusLine} />

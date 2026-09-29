@@ -1165,7 +1165,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const effectiveHistory = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const text of [...executedBuiltins, ...inputHistory]) {
+    for (const text of [...executedBuiltins, ...inputHistory].reverse()) {
       if (!text || seen.has(text)) continue;
       seen.add(text);
       out.push(text);

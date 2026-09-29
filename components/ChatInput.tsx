@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, useMemo, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -605,6 +605,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [imageWarningDismissed, setImageWarningDismissed] = useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [historyActiveIndex, setHistoryActiveIndex] = useState(0);
+  // 本会话内执行过的内建斜杠命令（/reload 等不进 transcript，单独记一份）
+  const [executedBuiltins, setExecutedBuiltins] = useState<string[]>([]);
   const [builtinCommandPending, setBuiltinCommandPending] = useState(false);
   const builtinCommandPendingRef = useRef(false);
   const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
@@ -623,6 +625,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const controlsMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
+  const historyDraftRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
@@ -954,6 +957,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     try {
       const result = await onBuiltinCommand(msg);
       if (!result.handled) return false;
+      // 内建命令不产生 user message，进不了 transcript；在此把文本记进历史
+      setExecutedBuiltins((prev) => (prev[0] === msg ? prev : [msg, ...prev]));
       if (!result.error && canClearBuiltinCommandInput(valueRef.current, attachedImagesRef.current.length, msg)) clearInput();
       return true;
     } finally {
@@ -1155,26 +1160,36 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     atItemRefs.current[atActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [atActiveIndex, atMenuOpen]);
 
-  useEffect(() => {
-    if (historyActiveIndex >= inputHistory.length) {
-      setHistoryActiveIndex(Math.max(0, inputHistory.length - 1));
+  // ChatWindow 传下来的 inputHistory 只有 transcript 里的 user message；
+  // 执行过的内建斜杠命令（本地 state）也要能 ↑ 调出。合并去重，仍以新→旧为序。
+  const effectiveHistory = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const text of [...executedBuiltins, ...inputHistory]) {
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+      if (out.length >= 50) break;
     }
-  }, [inputHistory.length, historyActiveIndex]);
+    return out;
+  }, [executedBuiltins, inputHistory]);
 
   useEffect(() => {
-    historyItemRefs.current.length = inputHistory.length;
-  }, [inputHistory.length]);
+    if (historyActiveIndex >= effectiveHistory.length) {
+      setHistoryActiveIndex(Math.max(0, effectiveHistory.length - 1));
+    }
+  }, [effectiveHistory.length, historyActiveIndex]);
+
+  useEffect(() => {
+    historyItemRefs.current.length = effectiveHistory.length;
+  }, [effectiveHistory.length]);
 
   useEffect(() => {
     if (!historyMenuOpen) return;
     historyItemRefs.current[historyActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [historyActiveIndex, historyMenuOpen]);
 
-  const applyHistoryInput = useCallback((text: string) => {
-    setValue(text);
-    setHistoryMenuOpen(false);
-    setHistoryActiveIndex(0);
-    setAtQuery(null);
+  const focusInputEnd = useCallback((text: string) => {
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (!ta) return;
@@ -1184,6 +1199,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
   }, []);
+
+  const applyHistoryInput = useCallback((text: string) => {
+    valueRef.current = text;
+    setValue(text);
+    setHistoryMenuOpen(false);
+    setHistoryActiveIndex(0);
+    setAtQuery(null);
+    focusInputEnd(text);
+  }, [focusInputEnd]);
+
+  // Shell 式历史预览：按上/下键时把历史条目实时放进输入框（菜单保留作列表）
+  const previewHistoryInput = useCallback((index: number) => {
+    const text = effectiveHistory[index];
+    if (text == null) return;
+    valueRef.current = text;
+    setValue(text);
+    setHistoryActiveIndex(index);
+    focusInputEnd(text);
+  }, [effectiveHistory, focusInputEnd]);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
     const nextValue = `/${command.name} `;
@@ -1283,22 +1317,38 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (historyMenuOpen && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setHistoryActiveIndex((i) => Math.min(Math.max(0, inputHistory.length - 1), i + 1));
+          const next = historyActiveIndex - 1;
+          if (next < 0) {
+            // 越过最新一条：恢复进入历史前的草稿
+            setHistoryMenuOpen(false);
+            setHistoryActiveIndex(0);
+            const draft = historyDraftRef.current;
+            valueRef.current = draft;
+            setValue(draft);
+            focusInputEnd(draft);
+          } else {
+            previewHistoryInput(next);
+          }
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          setHistoryActiveIndex((i) => Math.max(0, i - 1));
+          previewHistoryInput(Math.min(historyActiveIndex + 1, effectiveHistory.length - 1));
           return;
         }
         if (e.key === "Escape") {
           e.preventDefault();
           setHistoryMenuOpen(false);
+          setHistoryActiveIndex(0);
+          const draft = historyDraftRef.current;
+          valueRef.current = draft;
+          setValue(draft);
+          focusInputEnd(draft);
           return;
         }
-        if ((e.key === "Tab" || sendShortcut) && inputHistory[historyActiveIndex]) {
+        if ((e.key === "Tab" || sendShortcut) && effectiveHistory[historyActiveIndex]) {
           e.preventDefault();
-          applyHistoryInput(inputHistory[historyActiveIndex]);
+          applyHistoryInput(effectiveHistory[historyActiveIndex]);
           return;
         }
       }
@@ -1374,12 +1424,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (e.key === "ArrowUp" && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0) {
+      if (e.key === "ArrowUp" && !isComposing && effectiveHistory.length > 0) {
+        // shell 式：光标在第一行时才劫持 ↑，多行草稿仍旧用光标上下移行
+        const firstLineEnd = value.indexOf("\n");
+        const inFirstLine = firstLineEnd === -1 || textareaRef.current?.selectionStart == null
+          || textareaRef.current.selectionStart <= firstLineEnd;
+        if (!inFirstLine) return;
         e.preventDefault();
         setSlashMenuOpen(false);
         setAtMenuOpen(false);
-        setHistoryActiveIndex(inputHistory.length - 1);
+        historyDraftRef.current = valueRef.current;
         setHistoryMenuOpen(true);
+        previewHistoryInput(0);
         return;
       }
 
@@ -1399,7 +1455,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, effectiveHistory, historyActiveIndex, applyHistoryInput, previewHistoryInput, focusInputEnd, value]
   );
 
   const handleInput = useCallback(() => {
@@ -1814,7 +1870,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Main input */}
         <div style={{ position: "relative", minWidth: 0 }}>
-          {historyMenuOpen && inputHistory.length > 0 && (
+          {historyMenuOpen && effectiveHistory.length > 0 && (
             <div
               ref={historyMenuRef}
               style={{
@@ -1859,7 +1915,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </svg>
               </div>
               <div style={{ maxHeight: "calc(min(44vh, 360px) - 31px)", overflowY: "auto", padding: 4 }}>
-                {inputHistory.map((item, index) => {
+                {effectiveHistory.map((item, index) => {
                   const active = index === historyActiveIndex;
                   return (
                     <button

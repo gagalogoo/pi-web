@@ -78,7 +78,7 @@ test("follow-up shortcuts preserve newline, IME, mobile and completion behavior"
       COMPOSITION_END_ENTER_GRACE_MS: 100,
       isMobile: false, isStreaming: true,
       isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
-      historyMenuOpen: false, inputHistory: ["previous"], historyActiveIndex: 0,
+      historyMenuOpen: false, inputHistory: ["previous"], effectiveHistory: ["previous"], historyActiveIndex: 0,
       slashMenuOpen: false, slashQuery: null, displayedSlashCommands: [{}], slashActiveIndex: 0,
       atMenuOpen: false, atQuery: null, atMatches: [{}], atActiveIndex: 0,
       onSteer() {}, onFollowUp() {},
@@ -473,6 +473,7 @@ test("locks built-in command submission until it settles", async () => {
     clearInput() {},
     onBuiltinCommand: async () => new Promise((resolve) => { callback.resolve = resolve; }),
     setBuiltinCommandPending(value) { callback.pendingStates.push(value); },
+    setExecutedBuiltins() {},
     valueRef: { current: "/reload" },
   });
   callback.pendingStates = [];

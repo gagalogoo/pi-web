@@ -11,7 +11,7 @@ function isEditToolName(toolName: string): boolean {
 }
 
 const COMMAND_TOOLS = new Set(["bash", "powershell", "pwsh"]);
-const SEARCH_TOOLS = new Set(["grep", "find", "ls"]);
+const SEARCH_TOOLS = new Set(["grep", "find", "ls", "web_search", "web_fetch"]);
 
 export type ToolGroupKey = "read" | "write" | "edit" | "command" | "search" | "tool";
 

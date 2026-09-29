@@ -21,6 +21,10 @@ import {
   type SettingsSection,
 } from "@/lib/settings-navigation";
 import {
+  isEditExpandedByDefault,
+  setEditExpandedByDefault,
+} from "@/lib/edit-expansion-preference";
+import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
 } from "@/lib/thinking-expansion-preference";
@@ -70,6 +74,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [editExpanded, setEditExpanded] = useState(false);
   const [pushRegistering, setPushRegistering] = useState(false);
   const [pushStatus, setPushStatus] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const [webAuthEnabled, setWebAuthEnabled] = useState(false);
@@ -78,6 +83,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     setThinkingExpanded(isThinkingExpandedByDefault());
+    setEditExpanded(isEditExpandedByDefault());
     void fetch("/api/web-auth")
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
@@ -198,6 +204,17 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               onChange={(enabled) => {
                 setThinkingExpandedByDefault(enabled);
                 setThinkingExpanded(enabled);
+              }}
+            />
+          </div>
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.editExpandedDefault")}</span>
+            <ConfigSwitch
+              checked={editExpanded}
+              label={t("settings.editExpandedDefault")}
+              onChange={(enabled) => {
+                setEditExpandedByDefault(enabled);
+                setEditExpanded(enabled);
               }}
             />
           </div>

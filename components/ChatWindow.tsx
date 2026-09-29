@@ -3,9 +3,11 @@ import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
+import type { AgentMessage, AgentUsage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
+import { groupBlocks, groupTreeRounds, planToolTrees, textBlocks, thinkingBlocks, toolGroupRunning, type ToolGroupKey, type ToolTreeStep } from "@/lib/command-group";
+import { EDIT_EXPANDED_EVENT, isEditExpandedByDefault } from "@/lib/edit-expansion-preference";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isAssistantTruncated, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
@@ -235,6 +237,161 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
       {(expanded || reveal) && (
         <div style={{ marginTop: 8 }}>
           {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TOOL_GROUP_LABEL: Record<ToolGroupKey, { running: string; done: string }> = {
+  read: { running: "chat.runningReads", done: "chat.readFiles" },
+  write: { running: "chat.runningWrites", done: "chat.wroteFiles" },
+  edit: { running: "chat.runningEdits", done: "chat.editedFiles" },
+  command: { running: "chat.runningCommands", done: "chat.ranCommands" },
+  search: { running: "chat.runningSearches", done: "chat.searched" },
+  tool: { running: "chat.runningGroupedTools", done: "chat.calledTools" },
+};
+
+const TOOL_TREE_ORDER: ToolGroupKey[] = ["read", "write", "edit", "command", "search", "tool"];
+
+function compactNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+function toolCountLabel(steps: ToolTreeStep[], running: boolean, t: (key: string, params?: Record<string, string | number>) => string): string {
+  const counts = new Map<ToolGroupKey, number>();
+  for (const step of steps) {
+    if (step.type === "tools") counts.set(step.key, (counts.get(step.key) ?? 0) + step.count);
+  }
+  const parts: string[] = [];
+  for (const key of TOOL_TREE_ORDER) {
+    const count = counts.get(key);
+    if (!count) continue;
+    const label = TOOL_GROUP_LABEL[key];
+    parts.push(t(running ? label.running : label.done, { count }));
+  }
+  return parts.join(" \u00b7 ");
+}
+
+function usageLabel(usage: AgentUsage | undefined, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (!usage) return "";
+  const tokens = (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+  const parts: string[] = [];
+  if (tokens) parts.push(t("chat.treeContext", { count: compactNumber(tokens) }));
+  if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
+  return parts.join(" \u00b7 ");
+}
+
+function sumRoundUsage(steps: readonly ToolTreeStep[], resolve: (index: number) => AgentMessage): AgentUsage | undefined {
+  const seen = new Set<number>();
+  let total: AgentUsage | undefined;
+  for (const step of steps) {
+    const indices = step.type === "tools" ? step.indices : [step.index];
+    for (const idx of indices) {
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      const msg = resolve(idx);
+      if (msg.role !== "assistant") continue;
+      const u = (msg as AssistantMessage).usage;
+      if (!u) continue;
+      if (!total) total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+      total.input += u.input ?? 0;
+      total.output += u.output ?? 0;
+      total.cacheRead += u.cacheRead ?? 0;
+      total.cacheWrite += u.cacheWrite ?? 0;
+      total.cost.total += u.cost?.total ?? 0;
+    }
+  }
+  return total;
+}
+
+function toolTreeLabel(steps: ToolTreeStep[], running: boolean, t: (key: string, params?: Record<string, string | number>) => string): string {
+  let thoughts = 0;
+  for (const step of steps) {
+    if (step.type === "thinking") thoughts += 1;
+  }
+  const parts: string[] = [];
+  if (thoughts) parts.push(t("chat.thoughtRounds", { count: thoughts }));
+  const toolPart = toolCountLabel(steps, running, t);
+  if (toolPart) parts.push(toolPart);
+  return parts.join(" \u00b7 ");
+}
+
+function ToolTree({ running, streaming, containsEdit, reveal = false, label, nodes, t, defaultExpanded = false }: { running: boolean; streaming: boolean; containsEdit: boolean; reveal?: boolean; label: string; nodes: ReactNode[]; t: (key: string, params?: Record<string, string | number>) => string; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(() => defaultExpanded || streaming || running);
+  const chosen = useRef(false);
+  useLayoutEffect(() => {
+    if (reveal) setExpanded(true);
+  }, [reveal]);
+  useEffect(() => {
+    // Collapse once the turn finishes. History trees mount collapsed; a live
+    // turn mounts expanded and folds when streaming ends. A default-expanded
+    // tree (the main per-question tree) stays open when the turn ends.
+    if (chosen.current) return;
+    if (!streaming) setExpanded(defaultExpanded);
+  }, [streaming, defaultExpanded]);
+  useEffect(() => {
+    if (!containsEdit) return;
+    const onChange = () => {
+      if (chosen.current) return;
+      setExpanded(isEditExpandedByDefault());
+    };
+    window.addEventListener(EDIT_EXPANDED_EVENT, onChange);
+    return () => window.removeEventListener(EDIT_EXPANDED_EVENT, onChange);
+  }, [containsEdit]);
+  const open = expanded || reveal;
+  const rail = running ? "var(--accent)" : "var(--text-dim)";
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => {
+          chosen.current = true;
+          setExpanded((value) => !value);
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          minHeight: 24,
+          padding: "2px 0",
+          border: "none",
+          background: "transparent",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          fontSize: 12,
+          textAlign: "left",
+        }}
+        title={open ? t("chat.collapseToolGroup") : t("chat.expandToolGroup")}
+      >
+        {running ? (
+          <span className="inline-block animate-spin rounded-full border border-current border-t-transparent" style={{ width: 14, height: 14, flexShrink: 0 }} />
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="8 12.5 11 15.5 16 9.5" />
+          </svg>
+        )}
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: "auto", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
+          <polyline points="4 2.5 7.5 6 4 9.5" />
+        </svg>
+      </button>
+      {open && (
+        <div style={{ position: "relative", paddingTop: 4 }}>
+          {nodes.map((node, index) => (
+            <div key={index} style={{ position: "relative", paddingLeft: 22, marginBottom: 6 }}>
+              <span aria-hidden style={{ position: "absolute", left: 0, top: 0, height: index === nodes.length - 1 ? 14 : "100%", borderLeft: `1px solid ${rail}`, opacity: 0.3 }} />
+              <svg width="12" height="7" viewBox="0 0 12 7" fill="none" aria-hidden style={{ position: "absolute", left: 0, top: 8, color: rail, opacity: 0.35 }}>
+                <path d="M0.5 0.5v5.5H12" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {node}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1025,7 +1182,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; bare?: boolean; part?: "thinking" | "text" | "tools"; toolGroup?: ToolGroupKey } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
                 const isVisible = isMessageGroupAnchor(msg) || msg.role === "assistant";
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
@@ -1064,6 +1221,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={options.writtenFiles}
+                    bare={options.bare}
+                    part={options.part}
+                    toolGroup={options.toolGroup}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;
@@ -1074,12 +1234,153 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 );
               };
 
+              const renderTree = (
+                steps: ToolTreeStep[],
+                resolve: (index: number) => AgentMessage,
+                keyPrefix: string,
+                attachRef: boolean,
+              ): ReactNode => {
+                const attached = new Set<number>();
+                const hit = (index: number, blocks: AssistantContentBlock[]) => Boolean(
+                  pendingSearchScroll && entryIds[index] === pendingSearchScroll.entryId && (!searchBlock || blocks.includes(searchBlock)),
+                );
+                const buildNodes = (roundSteps: ToolTreeStep[], roundPrefix: string, emit: { running: boolean; containsEdit: boolean; reveal: boolean }) => {
+                  const nodes: ReactNode[] = [];
+                  for (const step of roundSteps) {
+                    if (step.type === "thinking" || step.type === "text") {
+                      const message = resolve(step.index) as AssistantMessage;
+                      const blocks = step.type === "thinking" ? thinkingBlocks(message) : textBlocks(message);
+                      if (blocks.length === 0) continue;
+                      emit.reveal ||= hit(step.index, blocks);
+                      const takeRef = attachRef && !attached.has(step.index);
+                      if (takeRef) attached.add(step.index);
+                      nodes.push(renderMessage(step.index, {
+                        keyPrefix: `${roundPrefix}-${step.type}`,
+                        attachRef: takeRef,
+                        showTimestamp: false,
+                        bare: true,
+                        part: step.type,
+                        messageOverride: message,
+                      }));
+                      continue;
+                    }
+                    if (step.key === "edit") emit.containsEdit = true;
+                    if (toolGroupRunning(messages, step.indices, toolResultsMap, step.key, resolve)) emit.running = true;
+                    for (const index of step.indices) {
+                      const message = resolve(index) as AssistantMessage;
+                      emit.reveal ||= hit(index, groupBlocks(message, step.key));
+                      const takeRef = attachRef && !attached.has(index);
+                      if (takeRef) attached.add(index);
+                      nodes.push(renderMessage(index, {
+                        keyPrefix: `${roundPrefix}-step`,
+                        attachRef: takeRef,
+                        showTimestamp: false,
+                        bare: true,
+                        part: "tools",
+                        toolGroup: step.key,
+                        messageOverride: message,
+                      }));
+                    }
+                  }
+                  return nodes;
+                };
+
+                const rounds = groupTreeRounds(steps);
+                const first = steps[0];
+                const firstIndex = first.type === "tools" ? first.indices[0] : first.index;
+                const totalUsage = sumRoundUsage(steps, resolve);
+
+                // One round = the common case: render it directly, no nested
+                // subtree, so a single read/edit doesn't add a redundant level.
+                if (rounds.length <= 1) {
+                  const emit = { running: false, containsEdit: false, reveal: false };
+                  const nodes = buildNodes(steps, keyPrefix, emit);
+                  if (nodes.length === 0) return null;
+                  const label = [toolTreeLabel(steps, emit.running, t), usageLabel(totalUsage, t)].filter(Boolean).join(" \u00b7 ");
+                  return (
+                    <ToolTree
+                      key={`${keyPrefix}-tree-${entryIds[firstIndex] ?? firstIndex}`}
+                      running={emit.running}
+                      streaming={streamState.isStreaming}
+                      containsEdit={emit.containsEdit}
+                      reveal={emit.reveal}
+                      defaultExpanded
+                      label={label}
+                      nodes={nodes}
+                      t={t}
+                    />
+                  );
+                }
+
+                // Multiple thinking rounds: the main tree (open by default)
+                // holds one collapsible subtree per round.
+                const children: ReactNode[] = [];
+                let anyRunning = false;
+                let anyEdit = false;
+                let anyReveal = false;
+                rounds.forEach((roundSteps, roundIndex) => {
+                  const emit = { running: false, containsEdit: false, reveal: false };
+                  const nodes = buildNodes(roundSteps, `${keyPrefix}-r${roundIndex}`, emit);
+                  if (nodes.length === 0) return;
+                  anyRunning ||= emit.running;
+                  anyEdit ||= emit.containsEdit;
+                  anyReveal ||= emit.reveal;
+                  const roundFirst = roundSteps[0];
+                  const roundFirstIndex = roundFirst.type === "tools" ? roundFirst.indices[0] : roundFirst.index;
+                  const label = [
+                    t("chat.thoughtRound", { count: roundIndex + 1 }),
+                    toolCountLabel(roundSteps, emit.running, t),
+                    usageLabel(sumRoundUsage(roundSteps, resolve), t),
+                  ].filter(Boolean).join(" \u00b7 ");
+                  children.push(
+                    <ToolTree
+                      key={`${keyPrefix}-round-${entryIds[roundFirstIndex] ?? roundFirstIndex}`}
+                      running={emit.running}
+                      streaming={streamState.isStreaming}
+                      containsEdit={emit.containsEdit}
+                      reveal={emit.reveal}
+                      label={label}
+                      nodes={nodes}
+                      t={t}
+                    />,
+                  );
+                });
+                if (children.length === 0) return null;
+                const label = [toolTreeLabel(steps, anyRunning, t), usageLabel(totalUsage, t)].filter(Boolean).join(" \u00b7 ");
+                return (
+                  <ToolTree
+                    key={`${keyPrefix}-tree-${entryIds[firstIndex] ?? firstIndex}`}
+                    running={anyRunning}
+                    streaming={streamState.isStreaming}
+                    containsEdit={anyEdit}
+                    reveal={anyReveal}
+                    defaultExpanded
+                    label={label}
+                    nodes={children}
+                    t={t}
+                  />
+                );
+              };
+
+              const appendFull = (into: ReactNode[], start: number, end: number) => {
+                for (const plan of planToolTrees(messages, start, end)) {
+                  if (plan.type === "tree") {
+                    const node = renderTree(plan.steps, (index) => messages[index], "message", true);
+                    if (node) into.push(node);
+                    continue;
+                  }
+                  into.push(renderMessage(plan.index));
+                }
+              };
+
               const rendered: ReactNode[] = [];
               for (let idx = 0; idx < messages.length;) {
                 const msg = messages[idx];
                 if (!isMessageGroupAnchor(msg)) {
-                  rendered.push(renderMessage(idx));
-                  idx += 1;
+                  let end = idx + 1;
+                  while (end < messages.length && !isMessageGroupAnchor(messages[end])) end += 1;
+                  appendFull(rendered, idx, end);
+                  idx = end;
                   continue;
                 }
 
@@ -1089,19 +1390,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
                 const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
 
-                if (finalAssistantIdx === -1) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
-                if (isLiveTail) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
+                if (finalAssistantIdx === -1 || ((sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx)) {
+                  appendFull(rendered, userIdx, endIdx);
                   idx = endIdx;
                   continue;
                 }
@@ -1119,26 +1409,57 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 const finalProcessBlocks = finalAssistant.content.slice(0, finalProcessEnd < 0 ? undefined : finalProcessEnd);
 
                 const processViews: ReactNode[] = [];
+                let processMessageCount = 0;
                 let processToolCount = 0;
                 let processRefIdx: number | undefined;
                 let revealProcess = false;
+                const resolveProcess = (index: number): AgentMessage => {
+                  const message = messages[index];
+                  return index === finalAssistantIdx && message.role === "assistant"
+                    ? withAssistantBlocks(message as AssistantMessage, finalProcessBlocks, { omitUsage: Boolean(finalAnswerMessage) })
+                    : message;
+                };
+                const notedProcess = new Set<number>();
+                const noteProcess = (index: number, blocks: AssistantContentBlock[]) => {
+                  processRefIdx ??= visibleRefIndexByMessage.get(index);
+                  processToolCount += countToolCallBlocks(blocks);
+                  if (!notedProcess.has(index)) {
+                    notedProcess.add(index);
+                    processMessageCount += 1;
+                  }
+                  revealProcess ||= Boolean(pendingSearchScroll && entryIds[index] === pendingSearchScroll.entryId && (!searchBlock || blocks.includes(searchBlock)));
+                };
 
-                for (let processIdx = userIdx + 1; processIdx <= finalAssistantIdx; processIdx++) {
+                let hasTree = false;
+                for (const plan of planToolTrees(messages, userIdx + 1, finalAssistantIdx + 1, resolveProcess)) {
+                  if (plan.type === "tree") {
+                    hasTree = true;
+                    for (const step of plan.steps) {
+                      if (step.type === "thinking" || step.type === "text") {
+                        const message = resolveProcess(step.index) as AssistantMessage;
+                        const blocks = step.type === "thinking" ? thinkingBlocks(message) : textBlocks(message);
+                        if (blocks.length > 0) noteProcess(step.index, blocks);
+                      } else {
+                        for (const index of step.indices) noteProcess(index, groupBlocks(resolveProcess(index) as AssistantMessage, step.key));
+                      }
+                    }
+                    const node = renderTree(plan.steps, resolveProcess, "process", false);
+                    if (node) processViews.push(node);
+                    continue;
+                  }
+                  const processIdx = plan.index;
                   const processMessage = messages[processIdx];
                   if (processMessage.role === "custom") {
                     revealProcess ||= Boolean(pendingSearchScroll && pendingSearchScroll.entryId === entryIds[processIdx]);
+                    processMessageCount += 1;
                     processViews.push(renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }));
                     continue;
                   }
                   if (processMessage.role !== "assistant") continue;
-                  const message = processIdx === finalAssistantIdx
-                    ? withAssistantBlocks(processMessage, finalProcessBlocks, { omitUsage: Boolean(finalAnswerMessage) })
-                    : processMessage;
+                  const message = resolveProcess(processIdx) as AssistantMessage;
                   const blocks = getDisplayableAssistantBlocks(message);
                   if (blocks.length === 0) continue;
-                  processRefIdx ??= visibleRefIndexByMessage.get(processIdx);
-                  processToolCount += countToolCallBlocks(blocks);
-                  revealProcess ||= Boolean(pendingSearchScroll && entryIds[processIdx] === pendingSearchScroll.entryId && (!searchBlock || blocks.includes(searchBlock)));
+                  noteProcess(processIdx, blocks);
                   processViews.push(renderMessage(processIdx, {
                     attachRef: false,
                     keyPrefix: "process",
@@ -1151,11 +1472,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   rendered.push(
                     <div
                       key={`process-group-${entryIds[userIdx] ?? userIdx}`}
-                      ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
+                      ref={(el) => { if (processRefIdx !== undefined) messageRefs.current[processRefIdx] = el; }}
                     >
-                      <ProcessDetailsGroup messageCount={processViews.length} toolCallCount={processToolCount} defaultExpanded={!finalAnswerMessage} reveal={revealProcess} t={t}>
-                        {processViews}
-                      </ProcessDetailsGroup>
+                      {hasTree ? processViews : (
+                        <ProcessDetailsGroup messageCount={processMessageCount} toolCallCount={processToolCount} defaultExpanded={!finalAnswerMessage} reveal={revealProcess} t={t}>
+                          {processViews}
+                        </ProcessDetailsGroup>
+                      )}
                     </div>,
                   );
                 }

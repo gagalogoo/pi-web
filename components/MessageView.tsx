@@ -11,8 +11,10 @@ import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
+import { toolGroupKey, type ToolGroupKey } from "@/lib/command-group";
 import { isApplyPatchToolName, isEditToolName } from "@/lib/tool-names";
-import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
+import { hasToolCallExpansionChoice, isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
+import { EDIT_EXPANDED_EVENT, isEditExpandedByDefault } from "@/lib/edit-expansion-preference";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
@@ -205,6 +207,9 @@ interface Props {
    * final answer text-only.
    */
   writtenFiles?: WrittenFile[];
+  bare?: boolean;
+  part?: "thinking" | "text" | "tools";
+  toolGroup?: ToolGroupKey;
 }
 
 export function getModelDisplayName(
@@ -272,12 +277,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles, bare, part, toolGroup }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} bare={bare} part={part} toolGroup={toolGroup} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -310,7 +315,10 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
-    && prev.sessionId === next.sessionId;
+    && prev.sessionId === next.sessionId
+    && prev.bare === next.bare
+    && prev.part === next.part
+    && prev.toolGroup === next.toolGroup;
 });
 
 function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onEditContent }: {
@@ -360,6 +368,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       {imageBlocks.map((img, i) => {
         // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
         // pi-ai on-disk format uses flat {data, mimeType} — handle both
+        // SAFETY: stored image blocks may be the flat shape, which ImageContent does not declare.
         const flat = img as unknown as { data?: string; mimeType?: string };
         const src = img.source
           ? img.source.type === "base64"
@@ -609,6 +618,9 @@ function AssistantMessageView({
   entryId,
   searchBlock,
   writtenFiles,
+  bare,
+  part,
+  toolGroup,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -623,12 +635,21 @@ function AssistantMessageView({
   entryId?: string;
   searchBlock?: AssistantContentBlock;
   writtenFiles?: WrittenFile[];
+  bare?: boolean;
+  part?: "thinking" | "text" | "tools";
+  toolGroup?: ToolGroupKey;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = useMemo(() => (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
-    .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
+    .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming }))
+    .filter(({ block }) => {
+      if (part === "thinking") return block.type === "thinking";
+      if (part === "text") return block.type === "text";
+      if (part === "tools") return block.type === "toolCall" && toolGroupKey(block.toolName) === toolGroup;
+      return true;
+    }), [message.content, isStreaming, part, toolGroup]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
   const truncated = isAssistantTruncated(message, { isStreaming });
@@ -755,7 +776,7 @@ function AssistantMessageView({
     <div
       data-message-role="assistant"
       data-entry-id={entryId}
-      style={{ marginBottom: 16 }}
+      style={{ marginBottom: bare ? 0 : 16 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -765,7 +786,7 @@ function AssistantMessageView({
           fontSize: 11,
           color: "var(--text-dim)",
           marginBottom: 4,
-          display: "flex",
+          display: bare ? "none" : "flex",
           alignItems: "center",
           gap: 6,
         }}
@@ -854,7 +875,7 @@ function AssistantMessageView({
       )}
 
       <div style={{
-        display: "flex", alignItems: "center", gap: 8, marginTop: 4,
+        display: bare ? "none" : "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
         {message.usage && !isStreaming && (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
@@ -1033,6 +1054,31 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
       {duration !== undefined && (
         <span style={{ flexShrink: 0, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
       )}
+      {expanded && (
+        <button
+          type="button"
+          aria-label={t("chat.collapseToolGroup")}
+          title={t("chat.collapseToolGroup")}
+          onClick={() => setExpanded(false)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            width: 18,
+            height: 18,
+            padding: 0,
+            background: "transparent",
+            border: "none",
+            color: "var(--text-dim)",
+            cursor: "pointer",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 9.5 7.5 6 4 2.5" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -1045,15 +1091,28 @@ function isSubagentToolDetails(value: unknown): value is SubagentToolDetails {
 
 function ToolCallBlock({ block, result, duration, onOpenSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSession?: (sessionId: string) => void }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(() => isToolCallExpanded(block.toolCallId));
+  const isEditTool = isEditToolName(block.toolName);
+  const [expanded, setExpanded] = useState(() => (
+    hasToolCallExpansionChoice(block.toolCallId)
+      ? isToolCallExpanded(block.toolCallId)
+      : isEditTool && isEditExpandedByDefault()
+  ));
   const toggleExpanded = () => {
     const next = !expanded;
     setToolCallExpanded(block.toolCallId, next);
     setExpanded(next);
   };
+  useEffect(() => {
+    if (!isEditTool) return;
+    const onChange = () => {
+      if (hasToolCallExpansionChoice(block.toolCallId)) return;
+      setExpanded(isEditExpandedByDefault());
+    };
+    window.addEventListener(EDIT_EXPANDED_EVENT, onChange);
+    return () => window.removeEventListener(EDIT_EXPANDED_EVENT, onChange);
+  }, [isEditTool, block.toolCallId]);
   const inputStr = getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
-  const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
   const patchFiles = getApplyPatchFiles(block, result);
   const patchLabel = isApplyPatchToolName(block.toolName)
@@ -1789,6 +1848,7 @@ function getMessageImages(content: CustomMessage["content"] | UserMessage["conte
 }
 
 function imageSource(img: ImageContent): string {
+  // SAFETY: stored image blocks may be the flat {data, mimeType} shape, which ImageContent does not declare.
   const flat = img as unknown as { data?: string; mimeType?: string };
   if (img.source) {
     return img.source.type === "base64"

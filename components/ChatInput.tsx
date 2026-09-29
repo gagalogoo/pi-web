@@ -212,19 +212,12 @@ const THINKING_FRAME_COLOR: Partial<Record<typeof THINKING_LEVELS[number], strin
   max: "#ea580c",
 };
 
+const XHIGH_RING = "linear-gradient(120deg, #f43f5e, #f59e0b, #22c55e, #06b6d4, #8b5cf6)";
+
 function thinkingFrameStyle(level: typeof THINKING_LEVELS[number] | null): React.CSSProperties {
-  if (level === "xhigh") {
-    return {
-      border: "1px solid transparent",
-      background: "linear-gradient(var(--bg), var(--bg)) padding-box, linear-gradient(120deg, #f43f5e, #f59e0b, #22c55e, #06b6d4, #8b5cf6) border-box",
-    };
-  }
   const color = level ? THINKING_FRAME_COLOR[level] : undefined;
   if (!color) return {};
-  return {
-    border: `1px solid ${color}`,
-    background: `color-mix(in srgb, ${color} 10%, var(--bg))`,
-  };
+  return { border: `2px solid ${color}` };
 }
 
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
@@ -432,7 +425,7 @@ export function getUserMessageDraftImages(message: UserMessage): ChatDraftImage[
   return message.content.flatMap((block) => {
     if (block.type !== "image") return [];
 
-    // Support both the current nested image format and older flat pi-ai entries.
+    // SAFETY: stored image blocks may be the flat {data, mimeType} shape, which ImageContent does not declare.
     const flat = block as unknown as { data?: unknown; mimeType?: unknown };
     const data = block.source?.type === "base64" ? block.source.data : flat.data;
     const mimeType = block.source?.type === "base64" ? block.source.media_type : flat.mimeType;
@@ -1568,6 +1561,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const rawToolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "configured"))?.[0] ?? "configured";
   const toolPresetLabel = rawToolPresetLabel === "chat-only" ? t("chat.chatOnly") : rawToolPresetLabel;
   const thinkingFrame = compact || bashMode ? null : thinkingFrameStyle(isAutoThinkingSelection ? null : resolvedThinkingLevel);
+  const xhighRing = !compact && !bashMode && !isAutoThinkingSelection && resolvedThinkingLevel === "xhigh";
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -2162,6 +2156,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             );
           })()}
+          <div style={xhighRing ? {
+              padding: 2,
+              borderRadius: 16,
+              background: XHIGH_RING,
+              // Mask out the content box so the gradient paints only the 2px ring.
+              // The composer background is translucent in photo themes; without the
+              // mask the rainbow sits under the whole input and bleeds through.
+              WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+              WebkitMaskComposite: "xor",
+              mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+              maskComposite: "exclude",
+              minWidth: 0,
+            } : { display: "contents" }}>
           <div
             style={{
               minWidth: 0,
@@ -2169,8 +2176,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               flexDirection: compact ? "column" : "row",
               gap: 8,
               alignItems: compact ? "stretch" : "center",
-              background: thinkingFrame?.background ?? "var(--bg)",
-              border: compact ? "none" : thinkingFrame?.border ?? `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
+              background: "var(--bg)",
+              border: compact || xhighRing ? "none" : thinkingFrame?.border ?? `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
                 ? "rgba(234,179,8,0.4)"
                 : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: compact ? 0 : 14,
@@ -2310,6 +2317,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {t("chat.send")}
             </button>
           )}
+          </div>
           </div>
         </div>
 

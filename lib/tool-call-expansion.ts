@@ -8,18 +8,21 @@
  * outside React lets the remounted card start expanded without threading state
  * through every message component.
  */
-const expandedToolCalls = new Set<string>();
+const expansionChoice = new Map<string, boolean>();
 
 export function isToolCallExpanded(toolCallId: string | undefined): boolean {
-  return toolCallId !== undefined && expandedToolCalls.has(toolCallId);
+  return toolCallId !== undefined && expansionChoice.get(toolCallId) === true;
+}
+
+export function hasToolCallExpansionChoice(toolCallId: string | undefined): boolean {
+  return toolCallId !== undefined && expansionChoice.has(toolCallId);
 }
 
 export function setToolCallExpanded(toolCallId: string | undefined, expanded: boolean): void {
   if (!toolCallId) return;
-  if (expanded) expandedToolCalls.add(toolCallId);
-  else expandedToolCalls.delete(toolCallId);
+  expansionChoice.set(toolCallId, expanded);
 }
 
 export function clearExpandedToolCalls(): void {
-  expandedToolCalls.clear();
+  expansionChoice.clear();
 }

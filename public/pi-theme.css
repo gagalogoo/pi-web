@@ -117,6 +117,20 @@ html {
 .settings-dialog-main {
   position: relative !important;
 }
+/* Only the chat page keeps the photo showing through; the side panels stay solid.
+   Overriding the vars is enough: each surface reads them for its own background. */
+.sidebar-container,
+#file-panel {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  --bg: var(--pi-solid) !important;
+  --assistant-bg: var(--pi-solid) !important;
+  --bg-panel: var(--pi-solid-panel) !important;
+  --user-bg: var(--pi-solid-user) !important;
+  --tool-bg: var(--pi-solid-tool) !important;
+  --bg-hover: var(--pi-solid-hover) !important;
+  --bg-selected: var(--pi-solid-selected) !important;
+}
 .markdown-code-block,
 .markdown-code-header {
   background: color-mix(in srgb, canvas 92%, transparent) !important;

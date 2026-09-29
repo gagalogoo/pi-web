@@ -21,7 +21,7 @@ test("keeps one thinking control and leaves it usable while the session is busy"
   assert.match(source, /selectableThinkingLevels\(availableThinkingLevels\)/);
   assert.match(source, /onThinkingLevelChange\(next\)/);
   assert.match(source, /high: "#d946ef"/);
-  assert.match(source, /level === "xhigh"/);
+  assert.match(source, /resolvedThinkingLevel === "xhigh"/);
   assert.match(source, /linear-gradient\(120deg, #f43f5e, #f59e0b, #22c55e, #06b6d4, #8b5cf6\)/);
   assert.match(source, /thinkingFrameStyle\(isAutoThinkingSelection \? null : resolvedThinkingLevel\)/);
 });

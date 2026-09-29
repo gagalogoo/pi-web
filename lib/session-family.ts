@@ -6,6 +6,13 @@ export interface SessionFamily {
   latestModified: string;
 }
 
+export interface SessionFamilyRow {
+  session: SessionInfo;
+  depth: number;
+  hasChildren: boolean;
+  collapsed: boolean;
+}
+
 function resolveFamilyRoots(sessions: readonly SessionInfo[]): Map<string, string | null> {
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const roots = new Map<string, string | null>();
@@ -77,4 +84,41 @@ export function getSessionFamily(
     family.root.id === sessionId
     || family.subagents.some((session) => session.id === sessionId)
   )) ?? null;
+}
+
+/**
+ * Flatten families into sidebar rows: the root first, then its subagent
+ * descendants indented under their parents, newest first. A collapsed parent
+ * hides every descendant so the list keeps a real parent/child layering.
+ */
+export function flattenSessionFamilies(
+  families: readonly SessionFamily[],
+  collapsedIds: ReadonlySet<string> = new Set(),
+): SessionFamilyRow[] {
+  const childrenByParent = new Map<string, SessionInfo[]>();
+  for (const family of families) {
+    for (const subagent of family.subagents) {
+      const parentId = subagent.relation?.kind === "subagent" ? subagent.relation.parentSessionId : null;
+      if (!parentId) continue;
+      const list = childrenByParent.get(parentId);
+      if (list) list.push(subagent);
+      else childrenByParent.set(parentId, [subagent]);
+    }
+  }
+  for (const list of childrenByParent.values()) {
+    list.sort((a, b) => b.modified.localeCompare(a.modified));
+  }
+
+  const rows: SessionFamilyRow[] = [];
+  const visited = new Set<string>();
+  const push = (session: SessionInfo, depth: number): void => {
+    if (visited.has(session.id)) return;
+    visited.add(session.id);
+    const children = childrenByParent.get(session.id) ?? [];
+    rows.push({ session, depth, hasChildren: children.length > 0, collapsed: collapsedIds.has(session.id) });
+    if (collapsedIds.has(session.id)) return;
+    for (const child of children) push(child, depth + 1);
+  };
+  for (const family of families) push(family.root, 0);
+  return rows;
 }

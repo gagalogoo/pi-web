@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { listSessionFamilies } from "@/lib/session-family";
+import { flattenSessionFamilies, listSessionFamilies } from "@/lib/session-family";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
@@ -476,6 +476,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [listViewportH, setListViewportH] = useState(0);
   const [listScrollTop, setListScrollTop] = useState(0);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+  const [collapsedSessions, setCollapsedSessions] = useState<ReadonlySet<string>>(new Set());
   const listScrollRafRef = useRef<number | null>(null);
   const listScrollTopRef = useRef(0);
   const renderedListScrollTopRef = useRef(0);
@@ -1088,13 +1089,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       : null);
 
   const sessionFamilies = useMemo(() => listSessionFamilies(filteredSessions), [filteredSessions]);
+  const sessionRows = useMemo(
+    () => flattenSessionFamilies(sessionFamilies, collapsedSessions),
+    [sessionFamilies, collapsedSessions],
+  );
+  const toggleSessionCollapse = useCallback((id: string) => {
+    setCollapsedSessions((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const virtualIndices = useMemo(() => getSessionListIndices(
-    sessionFamilies.length,
+    sessionRows.length,
     listScrollTop,
     listViewportH,
-    sessionFamilies.findIndex((family) => family.root.id === focusedSessionId),
-  ), [focusedSessionId, listScrollTop, listViewportH, sessionFamilies]);
+    sessionRows.findIndex((row) => row.session.id === focusedSessionId),
+  ), [focusedSessionId, listScrollTop, listViewportH, sessionRows]);
 
   return (
     <div
@@ -1800,38 +1813,38 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {error}
           </div>
         )}
-        {!loading && !error && sessionFamilies.length === 0 && (
+        {!loading && !error && sessionRows.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noSessions")}
           </div>
         )}
-        {sessionFamilies.length > 0 && (
+        {sessionRows.length > 0 && (
           <div
             style={{
               position: "relative",
-              height: sessionFamilies.length * SESSION_LIST_ITEM_HEIGHT,
+              height: sessionRows.length * SESSION_LIST_ITEM_HEIGHT,
             }}
           >
             {virtualIndices.map((index) => {
-              const family = sessionFamilies[index];
-              const familySessions = [family.root, ...family.subagents];
-              const displaySession = family.latestModified === family.root.modified
-                ? family.root
-                : { ...family.root, modified: family.latestModified };
-              // Bubble blur after the input's save handler before unpinning the row.
+              const row = sessionRows[index];
+              const { session, depth, hasChildren, collapsed } = row;
               return (
                 <div
-                  key={family.root.id}
-                  onFocus={() => setFocusedSessionId(family.root.id)}
+                  key={session.id}
+                  onFocus={() => setFocusedSessionId(session.id)}
                   onBlur={() => setFocusedSessionId(null)}
                   style={{ position: "absolute", top: index * SESSION_LIST_ITEM_HEIGHT, left: 0, right: 0 }}
                 >
                   <SessionItem
-                    session={displaySession}
-                    isSelected={familySessions.some((session) => session.id === selectedSessionId)}
-                    isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
-                    isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
-                    onClick={() => handleSelectSessionFromList(family.root)}
+                    session={session}
+                    depth={depth}
+                    hasChildren={hasChildren}
+                    collapsed={collapsed}
+                    onToggleCollapse={() => toggleSessionCollapse(session.id)}
+                    isSelected={session.id === selectedSessionId}
+                    isRunning={runningSessionIds.has(session.id)}
+                    isUnread={unreadSessionIds.has(session.id)}
+                    onClick={() => handleSelectSessionFromList(session)}
                     onRenamed={loadSessions}
                     onDeleted={(id) => {
                       onSessionDeleted?.(id);

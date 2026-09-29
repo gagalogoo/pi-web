@@ -277,9 +277,9 @@ function toolCountLabel(steps: ToolTreeStep[], running: boolean, t: (key: string
 
 function usageLabel(usage: AgentUsage | undefined, t: (key: string, params?: Record<string, string | number>) => string): string {
   if (!usage) return "";
-  const tokens = (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
   const parts: string[] = [];
-  if (tokens) parts.push(t("chat.treeContext", { count: compactNumber(tokens) }));
+  if (usage.input ?? 0) parts.push(t("chat.treeInput", { count: compactNumber(usage.input ?? 0) }));
+  if (usage.output ?? 0) parts.push(t("chat.treeOutput", { count: compactNumber(usage.output ?? 0) }));
   if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
   return parts.join(" \u00b7 ");
 }

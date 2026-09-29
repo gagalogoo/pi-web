@@ -138,6 +138,7 @@ export type ToolTreeStep = Extract<CommandRenderStep, { type: "thinking" | "text
 
 export type ToolTreePlan =
   | { type: "message"; index: number }
+  | { type: "text"; index: number }
   | { type: "tree"; steps: ToolTreeStep[] };
 
 /** One pig-style tree for a contiguous thinking/tool run, across categories. */
@@ -158,6 +159,11 @@ export function planToolTrees(
     if (step.type === "message") {
       flush();
       out.push(step);
+    } else if (step.type === "text") {
+      // Prose never belongs in the tree: it is the model's narration/answer and
+      // must stay visible in the flow, not fold into a collapsed "round".
+      flush();
+      out.push({ type: "text", index: step.index });
     } else {
       steps.push(step);
     }

@@ -27,6 +27,7 @@ import { FrontmatterCard } from "./FrontmatterCard";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { copyText } from "@/lib/clipboard";
 import {
   resolveInitialFileDisplayMode,
   type FileViewerDisplayMode as DisplayMode,
@@ -223,6 +224,51 @@ function getFileApiUrl(
     if (value !== undefined) searchParams.set(key, String(value));
   }
   return `/api/files/${encoded}?${searchParams.toString()}`;
+}
+
+function CopyFileButton({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const busyRef = useRef(false);
+
+  const onCopy = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    try {
+      const response = await fetch(getFileApiUrl(filePath, "download", sourceSessionId));
+      if (!response.ok) throw new Error(String(response.status));
+      await copyText(await response.text());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* no visual error for a copy miss */
+    } finally {
+      busyRef.current = false;
+    }
+  };
+
+  const label = copied ? t("i18n.copied") : t("i18n.copy");
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title={label}
+      aria-label={label}
+      className="file-viewer-icon-button"
+      style={copied ? { color: "#4ade80" } : undefined}
+    >
+      {copied ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+    </button>
+  );
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
@@ -1659,7 +1705,12 @@ function TextFileViewer({
             )}
           </div>
 
-          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
+          {!isDeletedDiff && (
+            <>
+              <CopyFileButton filePath={filePath} sourceSessionId={sourceSessionId} />
+              <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
+            </>
+          )}
         </div>
       </div>
 

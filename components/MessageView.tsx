@@ -183,6 +183,15 @@ function loadThinkingContent(sessionId: string, entryId: string, blockIndex: num
   return request;
 }
 
+const THINKING_LABEL_KEYS: Record<string, string> = {
+  minimal: "chat.thinkingMinimal",
+  low: "chat.thinkingLow",
+  medium: "chat.thinkingMedium",
+  high: "chat.thinkingHigh",
+  xhigh: "chat.thinkingXhigh",
+  max: "chat.thinkingMax",
+};
+
 interface Props {
   message: AgentMessage;
   isStreaming?: boolean;
@@ -210,6 +219,8 @@ interface Props {
   bare?: boolean;
   part?: "thinking" | "text" | "tools";
   toolGroup?: ToolGroupKey;
+  /** Current session thinking level (auto/off/minimal/low/medium/high/xhigh/max). */
+  thinkingLevel?: string;
 }
 
 export function getModelDisplayName(
@@ -277,12 +288,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles, bare, part, toolGroup }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles, bare, part, toolGroup, thinkingLevel }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} bare={bare} part={part} toolGroup={toolGroup} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} bare={bare} part={part} toolGroup={toolGroup} thinkingLevel={thinkingLevel} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -318,7 +329,8 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.sessionId === next.sessionId
     && prev.bare === next.bare
     && prev.part === next.part
-    && prev.toolGroup === next.toolGroup;
+    && prev.toolGroup === next.toolGroup
+    && prev.thinkingLevel === next.thinkingLevel;
 });
 
 function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onEditContent }: {
@@ -621,6 +633,7 @@ function AssistantMessageView({
   bare,
   part,
   toolGroup,
+  thinkingLevel,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -638,6 +651,7 @@ function AssistantMessageView({
   bare?: boolean;
   part?: "thinking" | "text" | "tools";
   toolGroup?: ToolGroupKey;
+  thinkingLevel?: string;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
@@ -793,6 +807,9 @@ function AssistantMessageView({
       >
         {message.provider && (
           <span>{getModelDisplayName(message.provider, message.model, modelNames)}</span>
+        )}
+        {thinkingLevel && THINKING_LABEL_KEYS[thinkingLevel] && (
+          <span style={{ color: "var(--text-dim)" }}>{t(THINKING_LABEL_KEYS[thinkingLevel])}</span>
         )}
         {isStreaming && (() => {
           const est = Math.round(estimatedTokens);

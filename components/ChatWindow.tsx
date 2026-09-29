@@ -319,7 +319,7 @@ function toolTreeLabel(steps: ToolTreeStep[], running: boolean, t: (key: string,
   return parts.join(" \u00b7 ");
 }
 
-function ToolTree({ running, streaming, containsEdit, reveal = false, label, nodes, t, defaultExpanded = false }: { running: boolean; streaming: boolean; containsEdit: boolean; reveal?: boolean; label: string; nodes: ReactNode[]; t: (key: string, params?: Record<string, string | number>) => string; defaultExpanded?: boolean }) {
+function ToolTree({ running, streaming, containsEdit, reveal = false, label, hint, nodes, t, defaultExpanded = false }: { running: boolean; streaming: boolean; containsEdit: boolean; reveal?: boolean; label: string; hint?: string; nodes: ReactNode[]; t: (key: string, params?: Record<string, string | number>) => string; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(() => defaultExpanded || streaming || running);
   const chosen = useRef(false);
   useLayoutEffect(() => {
@@ -377,6 +377,9 @@ function ToolTree({ running, streaming, containsEdit, reveal = false, label, nod
           </svg>
         )}
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        {hint && (
+          <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-dim)", opacity: 0.8, background: "var(--bg-hover)", padding: "0 6px", borderRadius: 999, lineHeight: "18px", fontVariantNumeric: "tabular-nums" }}>{hint}</span>
+        )}
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: "auto", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
         </svg>
@@ -1224,6 +1227,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     bare={options.bare}
                     part={options.part}
                     toolGroup={options.toolGroup}
+                    thinkingLevel={thinkingLevel ?? undefined}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;
@@ -1296,7 +1300,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   const emit = { running: false, containsEdit: false, reveal: false };
                   const nodes = buildNodes(steps, keyPrefix, emit);
                   if (nodes.length === 0) return null;
-                  const label = [toolTreeLabel(steps, emit.running, t), usageLabel(totalUsage, t)].filter(Boolean).join(" \u00b7 ");
+                  const label = toolTreeLabel(steps, emit.running, t);
+                  const hint = usageLabel(totalUsage, t);
                   return (
                     <ToolTree
                       key={`${keyPrefix}-tree-${entryIds[firstIndex] ?? firstIndex}`}
@@ -1306,6 +1311,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       reveal={emit.reveal}
                       defaultExpanded
                       label={label}
+                      hint={hint || undefined}
                       nodes={nodes}
                       t={t}
                     />
@@ -1330,8 +1336,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   const label = [
                     t("chat.thoughtRound", { count: roundIndex + 1 }),
                     toolCountLabel(roundSteps, emit.running, t),
-                    usageLabel(sumRoundUsage(roundSteps, resolve), t),
                   ].filter(Boolean).join(" \u00b7 ");
+                  const hint = usageLabel(sumRoundUsage(roundSteps, resolve), t);
                   children.push(
                     <ToolTree
                       key={`${keyPrefix}-round-${entryIds[roundFirstIndex] ?? roundFirstIndex}`}
@@ -1340,13 +1346,15 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       containsEdit={emit.containsEdit}
                       reveal={emit.reveal}
                       label={label}
+                      hint={hint || undefined}
                       nodes={nodes}
                       t={t}
                     />,
                   );
                 });
                 if (children.length === 0) return null;
-                const label = [toolTreeLabel(steps, anyRunning, t), usageLabel(totalUsage, t)].filter(Boolean).join(" \u00b7 ");
+                const label = toolTreeLabel(steps, anyRunning, t);
+                const hint = usageLabel(totalUsage, t);
                 return (
                   <ToolTree
                     key={`${keyPrefix}-tree-${entryIds[firstIndex] ?? firstIndex}`}
@@ -1356,6 +1364,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     reveal={anyReveal}
                     defaultExpanded
                     label={label}
+                    hint={hint || undefined}
                     nodes={children}
                     t={t}
                   />
@@ -1367,6 +1376,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   if (plan.type === "tree") {
                     const node = renderTree(plan.steps, (index) => messages[index], "message", true);
                     if (node) into.push(node);
+                    continue;
+                  }
+                  if (plan.type === "text") {
+                    into.push(renderMessage(plan.index, { part: "text", bare: true, showTimestamp: false }));
                     continue;
                   }
                   into.push(renderMessage(plan.index));
@@ -1431,8 +1444,23 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 };
 
                 let hasTree = false;
-                for (const plan of planToolTrees(messages, userIdx + 1, finalAssistantIdx + 1, resolveProcess)) {
-                  if (plan.type === "tree") {
+              for (const plan of planToolTrees(messages, userIdx + 1, finalAssistantIdx + 1, resolveProcess)) {
+                if (plan.type === "text") {
+                  const message = resolveProcess(plan.index) as AssistantMessage;
+                  const blocks = textBlocks(message);
+                  if (blocks.length === 0) continue;
+                  noteProcess(plan.index, blocks);
+                  processViews.push(renderMessage(plan.index, {
+                    attachRef: false,
+                    keyPrefix: "process",
+                    messageOverride: message,
+                    showTimestamp: false,
+                    bare: true,
+                    part: "text",
+                  }));
+                  continue;
+                }
+                if (plan.type === "tree") {
                     hasTree = true;
                     for (const step of plan.steps) {
                       if (step.type === "thinking" || step.type === "text") {

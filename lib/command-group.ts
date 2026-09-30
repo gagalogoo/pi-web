@@ -26,6 +26,14 @@ export function isCommandToolName(name: string): boolean {
   return COMMAND_TOOLS.has(name.trim().toLowerCase());
 }
 
+/** Token count from a compress receipt. Null when the receipt has no number yet. */
+export function compressSavedTokens(text: string): number | null {
+  const match = text.match(/~?([\d,]+)\s+tokens saved/i);
+  if (!match) return null;
+  const n = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function toolGroupKey(toolName: string): ToolGroupKey {
   const name = toolName.trim().toLowerCase();
   if (name === "read") return "read";
@@ -39,12 +47,14 @@ export function toolGroupKey(toolName: string): ToolGroupKey {
 type Piece =
   | { type: "thinking"; index: number }
   | { type: "text"; index: number }
+  | { type: "compress"; index: number; toolCallId: string }
   | { type: "tools"; index: number; key: ToolGroupKey; calls: number };
 
 export type CommandRenderStep =
   | { type: "message"; index: number }
   | { type: "thinking"; index: number }
   | { type: "text"; index: number }
+  | { type: "compress"; index: number; toolCallId: string }
   | { type: "tools"; key: ToolGroupKey; indices: number[]; count: number };
 
 function piecesFor(message: AgentMessage, index: number): Piece[] | null {
@@ -71,6 +81,11 @@ function piecesFor(message: AgentMessage, index: number): Piece[] | null {
       continue;
     }
     if (block.type === "toolCall") {
+      if (block.toolName.trim().toLowerCase() === "compress") {
+        flushRun();
+        pieces.push({ type: "compress", index, toolCallId: block.toolCallId });
+        continue;
+      }
       const key = toolGroupKey(block.toolName);
       if (runKey && runKey !== key) flushRun();
       runKey = key;
@@ -86,7 +101,7 @@ function piecesFor(message: AgentMessage, index: number): Piece[] | null {
     }
   }
   flushRun();
-  return pieces.some((piece) => piece.type === "tools" || piece.type === "thinking") ? pieces : null;
+  return pieces.some((piece) => piece.type === "tools" || piece.type === "thinking" || piece.type === "compress") ? pieces : null;
 }
 
 export function planCommandRuns(
@@ -139,6 +154,7 @@ export type ToolTreeStep = Extract<CommandRenderStep, { type: "thinking" | "text
 export type ToolTreePlan =
   | { type: "message"; index: number }
   | { type: "text"; index: number }
+  | { type: "compress"; index: number; toolCallId: string }
   | { type: "tree"; steps: ToolTreeStep[] };
 
 /** One pig-style tree for a contiguous thinking/tool run, across categories. */
@@ -159,11 +175,11 @@ export function planToolTrees(
     if (step.type === "message") {
       flush();
       out.push(step);
-    } else if (step.type === "text") {
-      // Prose never belongs in the tree: it is the model's narration/answer and
-      // must stay visible in the flow, not fold into a collapsed "round".
+    } else if (step.type === "text" || step.type === "compress") {
+      // Prose and compression stay in the flow. A collapsed round hides when
+      // context was compressed.
       flush();
-      out.push({ type: "text", index: step.index });
+      out.push(step.type === "text" ? { type: "text", index: step.index } : step);
     } else {
       steps.push(step);
     }

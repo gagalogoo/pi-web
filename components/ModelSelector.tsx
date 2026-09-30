@@ -34,6 +34,10 @@ function compareModelOptions(a: ModelSelectorOption, b: ModelSelectorOption): nu
     || MODEL_OPTION_COLLATOR.compare(a.modelId, b.modelId);
 }
 
+export function isModelPickerShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey" | "repeat">): boolean {
+  return event.key.toLowerCase() === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.repeat;
+}
+
 export function filterModelOptions(options: ModelSelectorOption[], query: string): ModelSelectorOption[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return options;
@@ -63,6 +67,7 @@ export function ModelSelector({
   const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<{ top: number; right: number; bottom: number; left: number; width: number } | null>(null);
   const [filter, setFilter] = useState("");
@@ -101,6 +106,35 @@ export function ModelSelector({
     setOpen(false);
     setFilter("");
   }, [locked]);
+
+  const toggleFrom = (button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect();
+    setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
+    setOpen((current) => {
+      if (current) setFilter("");
+      return !current;
+    });
+  };
+
+  useEffect(() => {
+    if (variant !== "toolbar") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || !isModelPickerShortcut(event)) return;
+      const target = event.target;
+      if (target instanceof Element) {
+        const field = target.closest("input, textarea, [contenteditable='true']");
+        if (field && !field.classList.contains("chat-input-textarea") && !rootRef.current?.contains(field)) return;
+      }
+      if (locked) return;
+      const button = buttonRef.current;
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFrom(button);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [variant, locked]);
 
   const buttonStyle: CSSProperties = variant === "field"
     ? {
@@ -161,22 +195,17 @@ export function ModelSelector({
       }}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-busy={busy || undefined}
+        aria-keyshortcuts={variant === "toolbar" ? "Control+L" : undefined}
         disabled={locked}
-        title={busy ? "Switching model" : locked ? currentName : sortedOptions.length > 0 || onClear ? "Change model" : "No available models"}
+        title={busy ? "Switching model" : locked ? currentName : sortedOptions.length > 0 || onClear ? (variant === "toolbar" ? "Change model (Ctrl+L)" : "Change model") : "No available models"}
         style={buttonStyle}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
-          setOpen((current) => {
-            if (current) setFilter("");
-            return !current;
-          });
-        }}
+        onClick={(event) => toggleFrom(event.currentTarget)}
         onMouseEnter={(event) => {
           if (locked) return;
           event.currentTarget.style.background = "var(--bg-hover)";
@@ -231,6 +260,7 @@ export function ModelSelector({
         return (
           <div
             ref={panelRef}
+            className="model-selector-panel"
             role="listbox"
             aria-label={ariaLabel}
             style={{

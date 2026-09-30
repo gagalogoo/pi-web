@@ -120,7 +120,8 @@ html {
 /* Only the chat page keeps the photo showing through; the side panels stay solid.
    Overriding the vars is enough: each surface reads them for its own background. */
 .sidebar-container,
-#file-panel {
+#file-panel,
+.model-selector-panel {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   --bg: var(--pi-solid) !important;

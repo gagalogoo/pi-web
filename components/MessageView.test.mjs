@@ -72,6 +72,27 @@ test("previews the first thinking line and reveals the full text with the saved 
   }
 });
 
+test("collapses thinking when the default is off, including a latest-round flag", () => {
+  const previousWindow = globalThis.window;
+  try {
+    globalThis.window = { localStorage: { getItem: () => "false" } };
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ThinkingBlock, {
+        latest: true,
+        block: { type: "thinking", thinking: "Latest round reasoning\n\nHidden detail" },
+        blockIndex: 0,
+      }),
+    ));
+    assert.match(html, /aria-expanded="false"/);
+    assert.equal(html.includes("Hidden detail"), false);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
 test("shows deferred thinking previews without loading the full content", () => {
   const html = renderMessage({
     role: "assistant",

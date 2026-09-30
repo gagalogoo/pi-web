@@ -29,6 +29,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { useChatAppearance } from "@/hooks/useChatAppearance";
 import type { ToolPreset } from "@/lib/tool-presets";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
+import { ContextUsageRing } from "./ContextUsageRing";
+import type { ContextComposition } from "@/lib/context-composition";
 
 export { filterModelOptions } from "./ModelSelector";
 
@@ -83,6 +85,8 @@ interface Props {
   draftKey?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
+  contextComposition?: ContextComposition | null;
+  onContextOpen?: () => void;
 }
 
 export interface ChatInputHandle {
@@ -202,6 +206,17 @@ const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhi
 
 function selectableThinkingLevels(available: string[] | null | undefined) {
   return THINKING_LEVELS.filter((lvl) => !available || lvl === "auto" || available.includes(lvl));
+}
+
+/** Shift+Tab cycle. Skips auto: on an existing session it clears the override and the label stays put. */
+export function nextCycledThinkingLevel(
+  current: (typeof THINKING_LEVELS)[number],
+  available: string[] | null | undefined,
+): (typeof THINKING_LEVELS)[number] | null {
+  const levels = selectableThinkingLevels(available).filter((lvl) => lvl !== "auto");
+  if (levels.length === 0) return null;
+  const index = levels.findIndex((lvl) => lvl === current);
+  return levels[(index + 1) % levels.length];
 }
 
 const THINKING_FRAME_COLOR: Partial<Record<typeof THINKING_LEVELS[number], string>> = {
@@ -580,6 +595,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onPromptWithStreamingBehavior,
   draftKey,
   cwd,
+  contextComposition,
+  onContextOpen,
   compact = false,
 }: Props, ref) {
   const { t } = useI18n();
@@ -1655,16 +1672,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
       e.preventDefault();
       e.stopPropagation();
-      const levels = selectableThinkingLevels(availableThinkingLevels);
-      if (levels.length === 0) return;
       const current = isAutoThinkingSelection || !thinkingLevel || thinkingLevel === "auto" ? "auto" : thinkingLevel;
-      const index = levels.indexOf(current);
-      const next = levels[(index + 1) % levels.length];
-      if (next === "auto") {
-        if (!isAutoThinkingSelection) onThinkingLevelChange("auto");
-      } else if (isAutoThinkingSelection || next !== thinkingLevel) {
-        onThinkingLevelChange(next);
-      }
+      const next = nextCycledThinkingLevel(current, availableThinkingLevels);
+      if (!next || (next === current && current !== "auto")) return;
+      onThinkingLevelChange(next);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -2212,19 +2223,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             );
           })()}
-          <div style={xhighRing ? {
-              padding: 2,
+          <div style={xhighRing ? { position: "relative", padding: 2, minWidth: 0 } : { display: "contents" }}>
+          {xhighRing && (
+            <div aria-hidden style={{
+              position: "absolute",
+              inset: 0,
               borderRadius: 16,
+              padding: 2,
               background: XHIGH_RING,
-              // Mask out the content box so the gradient paints only the 2px ring.
-              // The composer background is translucent in photo themes; without the
-              // mask the rainbow sits under the whole input and bleeds through.
+              // Mask only this layer. Masking the composer hides the textarea text.
               WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
               WebkitMaskComposite: "xor",
               mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
               maskComposite: "exclude",
-              minWidth: 0,
-            } : { display: "contents" }}>
+              pointerEvents: "none",
+            }} />
+          )}
           <div
             style={{
               minWidth: 0,
@@ -2512,6 +2526,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 backdropFilter: "blur(10px)",
               } : null),
             }}>
+            {contextComposition && (
+              <ContextUsageRing composition={contextComposition} onOpen={onContextOpen} />
+            )}
             {onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button

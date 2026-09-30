@@ -11,8 +11,8 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
-const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, modelSupportsImageInput, nextCycledThinkingLevel, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ModelSelector, isModelPickerShortcut } = await jiti.import("./ModelSelector.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("@/lib/draft-store.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
@@ -147,6 +147,14 @@ test("file mention arrows wrap around the match list", () => {
   assert.equal(move("ArrowUp", 1, 3), 0);
   assert.equal(move("ArrowDown", 0, 1), 0);
   assert.equal(move("ArrowDown", 0, 0), 0);
+});
+
+test("Shift+Tab wraps thinking levels past xhigh", () => {
+  const available = ["off", "minimal", "low", "medium", "high", "xhigh"];
+  assert.equal(nextCycledThinkingLevel("xhigh", available), "off");
+  assert.equal(nextCycledThinkingLevel("high", available), "xhigh");
+  assert.equal(nextCycledThinkingLevel("auto", available), "off");
+  assert.equal(nextCycledThinkingLevel("xhigh", ["off", "high", "xhigh", "max"]), "max");
 });
 
 test("cycleListIndex wraps in both directions", () => {
@@ -317,6 +325,20 @@ test("shows and locks the optimistic model while a switch is pending", () => {
   assert.match(html, /disabled=""/);
   assert.match(html, />DeepSeek V4 Flash</);
   assert.match(html, /animation:spin 0\.8s linear infinite/);
+});
+
+test("opens the model menu on Ctrl+L and keeps that menu opaque", () => {
+  assert.equal(isModelPickerShortcut({ key: "l", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false }), true);
+  assert.equal(isModelPickerShortcut({ key: "L", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false }), true);
+  assert.equal(isModelPickerShortcut({ key: "l", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true, repeat: false }), false);
+  assert.equal(isModelPickerShortcut({ key: "l", ctrlKey: false, metaKey: true, altKey: false, shiftKey: false, repeat: false }), false);
+  assert.equal(isModelPickerShortcut({ key: "l", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: true }), false);
+  const source = readFileSync(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
+  assert.match(source, /model-selector-panel/);
+  assert.match(source, /isModelPickerShortcut\(event\)/);
+  assert.match(source, /chat-input-textarea/);
+  const theme = readFileSync(new URL("../public/pi-theme.css", import.meta.url), "utf8");
+  assert.match(theme, /\.model-selector-panel \{[\s\S]*--bg: var\(--pi-solid\)/);
 });
 
 test("filters model options by name and id", () => {

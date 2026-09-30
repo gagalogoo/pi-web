@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import type { AgentMessage, AgentUsage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { groupBlocks, groupTreeRounds, planToolTrees, textBlocks, thinkingBlocks, toolGroupRunning, type ToolGroupKey, type ToolTreeStep } from "@/lib/command-group";
+import { compressSavedTokens, groupBlocks, groupTreeRounds, planToolTrees, textBlocks, thinkingBlocks, toolGroupRunning, type ToolGroupKey, type ToolTreeStep } from "@/lib/command-group";
 import { EDIT_EXPANDED_EVENT, isEditExpandedByDefault } from "@/lib/edit-expansion-preference";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isAssistantTruncated, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
@@ -25,6 +25,7 @@ import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
+import { estimateContextComposition } from "@/lib/context-composition";
 import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import {
   captureScrollDistance,
@@ -433,11 +434,16 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     return position && !position.atBottom ? position : null;
   });
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
+  const [contextTools, setContextTools] = useState<ToolEntry[] | null>(null);
+  const handleSystemToolsChange = useCallback((tools: ToolEntry[] | null) => {
+    setContextTools(tools);
+    onSystemToolsChange?.(tools);
+  }, [onSystemToolsChange]);
 
   const {
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
-    retryInfo, contextUsage, forkingEntryId,
+    retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
@@ -452,11 +458,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, loadSystemInfo, loadSlashCommands, scrollUserMsgToTop,
     loadContext, activeLeafId, scrollToBottom, scrollToMessage,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
-    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
+    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange: handleSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
   const sessionBusy = agentRunning || bashRunning;
@@ -1030,6 +1036,16 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
+  const contextComposition = useMemo(() => estimateContextComposition({
+    systemPrompt,
+    tools: contextTools,
+    messages: streamState.streamingMessage ? [...messages, streamState.streamingMessage] : messages,
+    contextTokens: contextUsage?.tokens ?? null,
+    contextWindow: contextUsage?.contextWindow ?? 0,
+    percent: contextUsage?.percent ?? null,
+    truncated: hasEarlierMessages,
+  }), [systemPrompt, contextTools, messages, streamState.streamingMessage, contextUsage, hasEarlierMessages]);
+
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
@@ -1072,6 +1088,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? newSessionDraftKey ?? undefined}
       cwd={session?.cwd ?? newSessionCwd}
+      contextComposition={contextComposition}
+      onContextOpen={() => { void loadSystemInfo(); }}
     />
   );
 
@@ -1271,7 +1289,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     part={options.part}
                     toolGroup={options.toolGroup}
                     thinkingLevel={thinkingLevel ?? undefined}
-                    isLatest={msg.role === "assistant" && idx >= lastAnchorIdx}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;
@@ -1417,10 +1434,31 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 );
               };
 
+              const renderCompressNotice = (index: number, toolCallId: string) => {
+                const message = messages[index];
+                if (!message || message.role !== "assistant") return null;
+                const result = toolResultsMap.get(toolCallId);
+                const text = (result?.content ?? []).map((part) => part.type === "text" ? part.text : "").join("").trim();
+                const saved = compressSavedTokens(text);
+                const label = saved == null
+                  ? (text ? t("chat.compacted") : t("chat.compacting"))
+                  : `${t("chat.compacted")} \u00b7 ${t("chat.tokensSaved", { saved: compactNumber(saved) })}`;
+                return (
+                  <div key={`compress-${toolCallId}`} className="compress-rainbow whitespace-pre-wrap px-1 py-1 text-sm">
+                    {label}
+                  </div>
+                );
+              };
+
               const appendFull = (into: ReactNode[], start: number, end: number) => {
                 for (const plan of planToolTrees(messages, start, end)) {
                   if (plan.type === "tree") {
                     const node = renderTree(plan.steps, (index) => messages[index], "message", true, start === lastAnchorIdx);
+                    if (node) into.push(node);
+                    continue;
+                  }
+                  if (plan.type === "compress") {
+                    const node = renderCompressNotice(plan.index, plan.toolCallId);
                     if (node) into.push(node);
                     continue;
                   }
@@ -1490,7 +1528,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 };
 
                 let hasTree = false;
+                const compressNotices: ReactNode[] = [];
               for (const plan of planToolTrees(messages, userIdx + 1, finalAssistantIdx + 1, resolveProcess)) {
+                if (plan.type === "compress") {
+                  const node = renderCompressNotice(plan.index, plan.toolCallId);
+                  if (node) compressNotices.push(node);
+                  continue;
+                }
                 if (plan.type === "text") {
                   const message = resolveProcess(plan.index) as AssistantMessage;
                   const blocks = textBlocks(message);
@@ -1556,6 +1600,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     </div>,
                   );
                 }
+                for (const node of compressNotices) rendered.push(node);
 
                 if (finalAnswerMessage) {
                   // Each tool call is stored as its own assistant entry, so the
@@ -1594,7 +1639,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               );
             })()}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} isLatest />
+              <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (

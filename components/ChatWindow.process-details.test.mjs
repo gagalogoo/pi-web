@@ -8,7 +8,7 @@ test("expands process details for the latest turn and turns without a final answ
   assert.match(source, /const \[expanded, setExpanded\] = useState\(defaultExpanded\)/);
   assert.match(
     source,
-    /<ProcessDetailsGroup[\s\S]*?defaultExpanded=\{!finalAnswerMessage \|\| userIdx === lastAnchorIdx\}/,
+    /<ProcessDetailsGroup[\s\S]*?defaultExpanded=\{!answered \|\| userIdx === lastAnchorIdx\}/,
   );
 });
 
